@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+# vendor/  # Uncomment this line if you don't want to commit vendor directory
+.pnp
+.pnp.js
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Bun
+bun.lockb
+
+# Testing
+coverage/
+*.lcov
+.nyc_output
+
+# Production
+build/
+dist/
+out/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Hardhat
+artifacts/
+cache/
+typechain/
+typechain-types/
+
+# Docker
+.docker/
+
+# Database
+*.sqlite
+*.sqlite3
+postgres_data/
+
+# Temporary files
+tmp/
+temp/

@@ -1,0 +1,30 @@
+apiVersion: v2
+name: yield-optimizer
+description: A Helm chart for HyperEVM Yield Optimizer - Concentrated liquidity position monitoring and auto-rebalancing
+
+# Chart version
+version: 0.1.0
+
+# Application version
+appVersion: "1.0.0"
+
+type: application
+
+home: https://github.com/yourusername/yield-optimizer
+sources:
+  - https://github.com/yourusername/yield-optimizer
+
+maintainers:
+  - name: Yield Optimizer Team
+    email: team@yield-optimizer.com
+
+keywords:
+  - defi
+  - yield-farming
+  - hyperevm
+  - ethereum
+  - liquidity
+
+annotations:
+  category: DeFi
+  licenses: MIT

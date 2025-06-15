@@ -1,0 +1,28 @@
+{{- if .Values.monitor.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "yield-optimizer.fullname" . }}-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yield-optimizer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitor
+  {{- with .Values.monitor.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.monitor.service.type }}
+  ports:
+    - port: {{ .Values.monitor.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: {{ .Values.monitor.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "yield-optimizer.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: monitor
+{{- end }}

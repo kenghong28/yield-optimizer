@@ -1,0 +1,206 @@
+name: PR Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  # Label PR based on changes
+  label:
+    name: Label PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v4
+        with:
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
+
+  # Check PR size
+  size-check:
+    name: PR Size Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check PR size
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const additions = pr.additions;
+            const deletions = pr.deletions;
+            const total = additions + deletions;
+            
+            let label = 'size/XS';
+            if (total > 1000) label = 'size/XXL';
+            else if (total > 500) label = 'size/XL';
+            else if (total > 250) label = 'size/L';
+            else if (total > 100) label = 'size/M';
+            else if (total > 50) label = 'size/S';
+            
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: [label]
+            });
+            
+            if (total > 500) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: `⚠️ This PR contains ${total} line changes. Consider breaking it into smaller PRs for easier review.`
+              });
+            }
+
+  # Check commit messages
+  commit-lint:
+    name: Lint Commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commits
+        uses: wagoid/commitlint-github-action@v5
+        with:
+          configFile: '.github/commitlint.config.js'
+
+  # Check for secrets
+  secret-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # License check
+  license-check:
+    name: License Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check licenses
+        uses: fossa-contrib/fossa-action@v2
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          skip-test: true
+
+  # Documentation check
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check markdown
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - run: |
+          npm install -g markdownlint-cli
+          markdownlint '**/*.md' --ignore node_modules
+
+      - name: Check for broken links
+        uses: lycheeverse/lychee-action@v1
+        with:
+          fail: true
+          args: '--verbose --no-progress **/*.md'
+
+  # Performance check
+  performance:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'performance')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Run benchmarks
+        run: |
+          cd services/monitor
+          go test -bench=. -benchmem -count=3 -run=^$ ./... | tee new.txt
+          
+          # Compare with base branch
+          git checkout ${{ github.base_ref }}
+          go test -bench=. -benchmem -count=3 -run=^$ ./... | tee old.txt
+          
+          # Install benchstat
+          go install golang.org/x/perf/cmd/benchstat@latest
+          
+          # Compare results
+          benchstat old.txt new.txt
+
+  # Preview deployment
+  preview-deploy:
+    name: Preview Deployment
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'preview')
+    environment:
+      name: preview-pr-${{ github.event.pull_request.number }}
+      url: https://pr-${{ github.event.pull_request.number }}.preview.yield-optimizer.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy preview
+        run: |
+          echo "Deploying preview for PR #${{ github.event.pull_request.number }}"
+          # Deploy to preview environment
+          # This would typically deploy to a temporary namespace or preview cluster
+
+      - name: Comment PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `🚀 Preview deployment ready at https://pr-${{ github.event.pull_request.number }}.preview.yield-optimizer.example.com`
+            })
+
+  # Auto-merge dependabot PRs
+  auto-merge:
+    name: Auto-merge Dependabot PRs
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    needs: [commit-lint, secret-scan, license-check]
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v1
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Auto-merge minor updates
+        if: steps.metadata.outputs.update-type == 'version-update:semver-minor' || steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{github.event.pull_request.html_url}}
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}

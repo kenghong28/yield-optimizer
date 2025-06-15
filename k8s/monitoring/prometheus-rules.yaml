@@ -1,0 +1,182 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: yield-optimizer-rules
+  namespace: yield-optimizer
+  labels:
+    app.kubernetes.io/name: yield-optimizer
+    app.kubernetes.io/part-of: yield-optimizer
+    prometheus: kube-prometheus
+spec:
+  groups:
+  - name: yield-optimizer.rules
+    interval: 30s
+    rules:
+    # Position monitoring rules
+    - alert: NoActivePositions
+      expr: sum(yield_optimizer_positions_total) == 0
+      for: 15m
+      labels:
+        severity: warning
+        component: monitor
+      annotations:
+        summary: "No active positions in yield optimizer"
+        description: "The yield optimizer has no active positions for the last 15 minutes"
+        
+    - alert: LowAPY
+      expr: yield_optimizer_apy_current < 5
+      for: 30m
+      labels:
+        severity: warning
+        component: monitor
+      annotations:
+        summary: "Low APY detected on vault {{ $labels.vault }}"
+        description: "Vault {{ $labels.vault }} has APY of {{ $value }}% which is below threshold"
+        
+    # Rebalancing rules
+    - alert: HighRebalanceFailureRate
+      expr: |
+        (
+          sum(rate(yield_optimizer_rebalances_total{status="failed"}[5m])) / 
+          sum(rate(yield_optimizer_rebalances_total[5m]))
+        ) > 0.5
+      for: 10m
+      labels:
+        severity: critical
+        component: monitor
+      annotations:
+        summary: "High rebalance failure rate"
+        description: "More than 50% of rebalances are failing"
+        
+    - alert: NoRebalancesOccurring
+      expr: sum(rate(yield_optimizer_rebalances_total[1h])) == 0
+      for: 2h
+      labels:
+        severity: warning
+        component: monitor
+      annotations:
+        summary: "No rebalances in the last 2 hours"
+        description: "The yield optimizer has not performed any rebalances in the last 2 hours"
+        
+    # Error monitoring
+    - alert: HighErrorRate
+      expr: sum(rate(yield_optimizer_errors_total[5m])) > 0.1
+      for: 10m
+      labels:
+        severity: critical
+        component: monitor
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value }} errors/second"
+        
+    - alert: ContractInteractionErrors
+      expr: rate(yield_optimizer_errors_total{error_type="contract_interaction"}[5m]) > 0.05
+      for: 10m
+      labels:
+        severity: critical
+        component: monitor
+      annotations:
+        summary: "Contract interaction errors detected"
+        description: "Smart contract interactions are failing at {{ $value }} errors/second"
+        
+    # Service health
+    - alert: MonitorServiceDown
+      expr: up{job="yield-optimizer-monitor"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        component: monitor
+      annotations:
+        summary: "Yield optimizer monitor service is down"
+        description: "The monitor service has been down for more than 5 minutes"
+        
+    - alert: HighMemoryUsage
+      expr: |
+        (
+          container_memory_working_set_bytes{namespace="yield-optimizer", container="monitor"} / 
+          container_spec_memory_limit_bytes{namespace="yield-optimizer", container="monitor"}
+        ) > 0.9
+      for: 10m
+      labels:
+        severity: warning
+        component: monitor
+      annotations:
+        summary: "High memory usage in monitor service"
+        description: "Monitor service is using {{ $value | humanizePercentage }} of its memory limit"
+        
+    - alert: HighCPUUsage
+      expr: |
+        (
+          sum(rate(container_cpu_usage_seconds_total{namespace="yield-optimizer", container="monitor"}[5m])) / 
+          sum(container_spec_cpu_quota{namespace="yield-optimizer", container="monitor"}/container_spec_cpu_period{namespace="yield-optimizer", container="monitor"})
+        ) > 0.9
+      for: 10m
+      labels:
+        severity: warning
+        component: monitor
+      annotations:
+        summary: "High CPU usage in monitor service"
+        description: "Monitor service is using {{ $value | humanizePercentage }} of its CPU limit"
+        
+    # Database connectivity
+    - alert: DatabaseConnectionFailure
+      expr: yield_optimizer_database_connections_active == 0
+      for: 5m
+      labels:
+        severity: critical
+        component: database
+      annotations:
+        summary: "No active database connections"
+        description: "The yield optimizer has no active database connections"
+        
+    # HTTP endpoint monitoring
+    - alert: HighHTTPLatency
+      expr: |
+        histogram_quantile(0.95, 
+          sum(rate(http_request_duration_seconds_bucket{job="yield-optimizer-monitor"}[5m])) by (le)
+        ) > 1
+      for: 10m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High HTTP request latency"
+        description: "95th percentile latency is {{ $value }}s"
+        
+    - alert: HighHTTPErrorRate
+      expr: |
+        sum(rate(http_requests_total{job="yield-optimizer-monitor", status=~"5.."}[5m])) / 
+        sum(rate(http_requests_total{job="yield-optimizer-monitor"}[5m])) > 0.05
+      for: 10m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "High HTTP error rate"
+        description: "HTTP 5xx error rate is {{ $value | humanizePercentage }}"
+        
+  - name: yield-optimizer.recording-rules
+    interval: 15s
+    rules:
+    # Pre-calculate frequently used metrics
+    - record: yield_optimizer:positions_total
+      expr: sum(yield_optimizer_positions_total)
+      
+    - record: yield_optimizer:rebalance_success_rate
+      expr: |
+        sum(rate(yield_optimizer_rebalances_total{status="success"}[5m])) / 
+        sum(rate(yield_optimizer_rebalances_total[5m]))
+        
+    - record: yield_optimizer:avg_apy
+      expr: avg(yield_optimizer_apy_current)
+      
+    - record: yield_optimizer:error_rate
+      expr: sum(rate(yield_optimizer_errors_total[5m]))
+      
+    - record: yield_optimizer:http_request_rate
+      expr: sum(rate(http_requests_total{job="yield-optimizer-monitor"}[5m]))
+      
+    - record: yield_optimizer:http_error_rate
+      expr: |
+        sum(rate(http_requests_total{job="yield-optimizer-monitor", status=~"5.."}[5m])) / 
+        sum(rate(http_requests_total{job="yield-optimizer-monitor"}[5m]))

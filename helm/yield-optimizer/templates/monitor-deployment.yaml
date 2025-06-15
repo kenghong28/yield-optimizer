@@ -1,0 +1,99 @@
+{{- if .Values.monitor.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "yield-optimizer.fullname" . }}-monitor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yield-optimizer.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitor
+spec:
+  {{- if not .Values.monitor.autoscaling.enabled }}
+  replicas: {{ .Values.monitor.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "yield-optimizer.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: monitor
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "yield-optimizer.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: monitor
+        {{- with .Values.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "yield-optimizer.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: monitor
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.global.imageRegistry | default .Values.monitor.image.repository }}:{{ .Values.monitor.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.monitor.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitor.service.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.monitor.service.metricsPort }}
+              protocol: TCP
+          {{- if .Values.monitor.healthCheck.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.monitor.healthCheck.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.monitor.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.monitor.healthCheck.periodSeconds }}
+            timeoutSeconds: {{ .Values.monitor.healthCheck.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.monitor.healthCheck.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.monitor.healthCheck.initialDelaySeconds }}
+            periodSeconds: {{ .Values.monitor.healthCheck.periodSeconds }}
+            timeoutSeconds: {{ .Values.monitor.healthCheck.timeoutSeconds }}
+          {{- end }}
+          env:
+            {{- range $key, $value := .Values.monitor.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "yield-optimizer.fullname" . }}-config
+            - secretRef:
+                name: {{ include "yield-optimizer.fullname" . }}-secret
+          resources:
+            {{- toYaml .Values.monitor.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

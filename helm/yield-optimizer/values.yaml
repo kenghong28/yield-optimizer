@@ -1,0 +1,173 @@
+# Default values for yield-optimizer.
+# This is a YAML-formatted file.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# Application settings
+app:
+  name: yield-optimizer
+  version: "1.0.0"
+  
+# Monitor Service Configuration
+monitor:
+  enabled: true
+  name: monitor
+  
+  image:
+    repository: yield-optimizer/monitor
+    tag: "latest"
+    pullPolicy: Always
+    
+  replicaCount: 1
+  
+  # Resource limits and requests
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+      
+  # Environment variables
+  env:
+    # HyperEVM Configuration
+    RPC_URL: "https://998.rpc.thirdweb.com"
+    WS_RPC_URL: "wss://testnet.rpc.hyperliquid.xyz/evm"
+    CHAIN_ID: "998"
+    
+    # Performance settings
+    MAX_CONCURRENT_CHECKS: "10"
+    BATCH_SIZE: "100"
+    WORKER_COUNT: "5"
+    POSITION_CHECK_INTERVAL: "60s"
+    PRICE_UPDATE_INTERVAL: "15s"
+    LOG_LEVEL: "info"
+    
+    # Metrics
+    METRICS_ENABLED: "true"
+    METRICS_PORT: "9090"
+    
+  # Secret environment variables (will be created as secrets)
+  secretEnv:
+    DATABASE_URL: ""
+    REDIS_URL: "redis://redis:6379"
+    POSITION_MANAGER_ADDRESS: ""
+    VAULT_ADDRESSES: ""
+    
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 8080
+    metricsPort: 9090
+    
+  # Health checks
+  healthCheck:
+    enabled: true
+    path: /health
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    
+  # Horizontal Pod Autoscaler
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    
+# Redis Configuration (for caching)
+redis:
+  enabled: true
+  name: redis
+  
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+    
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+      
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessModes:
+      - ReadWriteOnce
+      
+  service:
+    type: ClusterIP
+    port: 6379
+
+# PostgreSQL Configuration
+# NOTE: PostgreSQL is managed externally via Supabase
+# No in-cluster PostgreSQL deployment needed
+postgresql:
+  enabled: false  # Always false - using external Supabase
+  external:
+    enabled: true
+    provider: "supabase"
+    # Connection details provided via secrets
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: yield-optimizer.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: monitor
+            port: 8080
+  tls: []
+  #  - secretName: yield-optimizer-tls
+  #    hosts:
+  #      - yield-optimizer.local
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod Security Context
+podSecurityContext:
+  fsGroup: 2000
+
+# Security Context
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Additional labels
+labels: {}
+
+# Additional annotations
+annotations: {}

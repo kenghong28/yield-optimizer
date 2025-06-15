@@ -1,0 +1,55 @@
+# Development environment values
+# Override values for development deployment
+
+monitor:
+  image:
+    tag: "dev"
+    pullPolicy: Never
+    
+  replicaCount: 1
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+      
+  env:
+    LOG_LEVEL: "debug"
+    POSITION_CHECK_INTERVAL: "120s"
+    PRICE_UPDATE_INTERVAL: "30s"
+    
+  secretEnv:
+    # Development secrets - use kubectl to create these
+    DATABASE_URL: "postgresql://postgres.mlqhxgvmztducrhmkhzw:Bto1Ane6W7t9vcoN@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
+    REDIS_URL: "redis://yield-optimizer-redis:6379"
+    POSITION_MANAGER_ADDRESS: "0x1234567890abcdef1234567890abcdef12345678"
+    VAULT_ADDRESSES: "0xabcdef1234567890abcdef1234567890abcdef12"
+
+redis:
+  enabled: true
+  persistence:
+    enabled: false  # Use emptyDir for development (faster, no persistence needed)
+    
+# Database: External Supabase (no PVC needed)
+postgresql:
+  enabled: false  # Always false - using external Supabase
+  external:
+    enabled: true
+    provider: "supabase"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: yield-optimizer-dev.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service:
+            name: monitor
+            port: 8080

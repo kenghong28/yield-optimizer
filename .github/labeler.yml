@@ -1,0 +1,65 @@
+# Add 'go' label to any changes within 'services/monitor' folder
+go:
+  - services/monitor/**/*
+
+# Add 'kubernetes' label to any K8s related changes
+kubernetes:
+  - k8s/**/*
+  - helm/**/*
+  - "*.yaml"
+  - "*.yml"
+
+# Add 'docker' label to any Dockerfile changes
+docker:
+  - "**/Dockerfile*"
+  - "**/.dockerignore"
+  - docker-compose*.yml
+
+# Add 'ci/cd' label to any CI/CD changes
+ci/cd:
+  - .github/workflows/*
+  - .github/actions/*
+  - .gitlab-ci.yml
+  - Jenkinsfile
+
+# Add 'documentation' label to any documentation changes
+documentation:
+  - "**/*.md"
+  - docs/**/*
+  - README*
+
+# Add 'monitoring' label to monitoring related changes
+monitoring:
+  - k8s/monitoring/**/*
+  - "**/metrics.go"
+  - "**/prometheus*"
+  - "**/grafana*"
+
+# Add 'security' label to security related changes
+security:
+  - "**/*secret*"
+  - "**/*security*"
+  - "**/rbac*"
+
+# Add 'test' label to test related changes
+test:
+  - "**/*_test.go"
+  - "**/test/**"
+  - "**/tests/**"
+  - "**/*test*"
+
+# Add 'dependencies' label to dependency updates
+dependencies:
+  - go.mod
+  - go.sum
+  - package*.json
+  - requirements.txt
+  - Gemfile*
+
+# Add 'config' label to configuration changes
+config:
+  - "**/*.conf"
+  - "**/*.config"
+  - "**/*.toml"
+  - "**/*.ini"
+  - "**/values*.yaml"

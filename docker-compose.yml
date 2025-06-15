@@ -1,0 +1,175 @@
+version: '3.9'
+
+services:
+  # Go Services
+  monitor:
+    build: 
+      context: ./services/monitor
+      dockerfile: Dockerfile
+    environment:
+      - RPC_URL=https://rpc.hyperliquid.xyz/evm
+      - WS_RPC_URL=wss://rpc.hyperliquid.xyz/evm
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/yield_optimizer
+      - LOG_LEVEL=info
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  rebalancer:
+    build:
+      context: ./services/rebalancer
+      dockerfile: Dockerfile
+    environment:
+      - RPC_URL=https://rpc.hyperliquid.xyz/evm
+      - PRIVATE_KEY=${REBALANCER_PRIVATE_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/yield_optimizer
+      - LOG_LEVEL=info
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - API_SERVICE_URL=http://api:3000
+      - WEBSOCKET_SERVICE_URL=http://websocket:3001
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - api
+      - websocket
+      - redis
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # Bun Services
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/yield_optimizer
+      - REDIS_URL=redis://redis:6379
+      - RPC_URL=https://rpc.hyperliquid.xyz/evm
+      - NODE_ENV=development
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  websocket:
+    build:
+      context: ./services/websocket
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=development
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  admin:
+    build:
+      context: ./services/admin
+      dockerfile: Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      - PORT=3002
+      - API_URL=http://gateway:8080
+      - NODE_ENV=development
+    depends_on:
+      - gateway
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # Infrastructure
+  postgres:
+    image: postgres:17.2
+    environment:
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=yield_optimizer
+      - POSTGRES_USER=postgres
+    command: >
+      postgres 
+      -c shared_preload_libraries=pg_stat_statements
+      -c max_connections=200
+      -c effective_cache_size=4GB
+      -c work_mem=256MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  redis:
+    image: redis/redis-stack:latest
+    command: >
+      redis-server 
+      --loadmodule /opt/redis-stack/lib/redistimeseries.so
+      --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+      - "8001:8001"  # RedisInsight UI
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # Monitoring (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - app-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+
+networks:
+  app-network:
+    driver: bridge

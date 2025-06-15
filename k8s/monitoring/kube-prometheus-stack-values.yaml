@@ -1,0 +1,146 @@
+# Kube-Prometheus-Stack Helm Chart Values
+# Customized for yield-optimizer monitoring
+
+prometheus:
+  prometheusSpec:
+    retention: 30d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+              
+    # Service monitor selector
+    serviceMonitorSelector:
+      matchLabels:
+        app.kubernetes.io/part-of: yield-optimizer
+        
+    # Scrape configs for yield-optimizer
+    additionalScrapeConfigs:
+      - job_name: 'yield-optimizer-monitor'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: ['yield-optimizer']
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            action: keep
+            regex: yield-optimizer
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+
+grafana:
+  enabled: true
+  adminPassword: admin # Change in production
+  
+  persistence:
+    enabled: true
+    size: 5Gi
+    
+  # Pre-configured data sources
+  sidecar:
+    datasources:
+      enabled: true
+      defaultDatasourceEnabled: true
+      
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      folder: /tmp/dashboards
+      provider:
+        disableDelete: false
+        foldersFromFilesStructure: true
+        
+  # Additional dashboards
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+      - name: 'yield-optimizer'
+        orgId: 1
+        folder: 'Yield Optimizer'
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        options:
+          path: /var/lib/grafana/dashboards/yield-optimizer
+
+alertmanager:
+  enabled: true
+  config:
+    global:
+      resolve_timeout: 5m
+      
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 12h
+      receiver: 'yield-optimizer-alerts'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+        
+    receivers:
+    - name: 'yield-optimizer-alerts'
+      webhook_configs:
+      - url: 'http://yield-optimizer-webhook.yield-optimizer.svc.cluster.local:9093/alerts'
+        send_resolved: true
+        
+    - name: 'critical-alerts'
+      # Configure your critical alert receiver (email, slack, etc)
+      webhook_configs:
+      - url: 'http://critical-alerts-webhook.yield-optimizer.svc.cluster.local:9093/alerts'
+
+# Node exporter for infrastructure metrics
+nodeExporter:
+  enabled: true
+
+# Kube state metrics for Kubernetes metrics
+kubeStateMetrics:
+  enabled: true
+
+# Prometheus operator
+prometheusOperator:
+  enabled: true
+
+# Default rules
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: false
+    general: true
+    k8s: true
+    kubeApiserver: false
+    kubeApiserverAvailability: false
+    kubeApiserverError: false
+    kubeApiserverSlos: false
+    kubelet: true
+    kubePrometheusGeneral: true
+    kubePrometheusNodeAlerting: true
+    kubePrometheusNodeRecording: true
+    kubernetesAbsent: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    kubeScheduler: false
+    kubeStateMetrics: true
+    network: true
+    node: true
+    prometheus: true
+    prometheusOperator: true

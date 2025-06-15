@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "yield-optimizer.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yield-optimizer.labels" . | nindent 4 }}
+data:
+  # HyperEVM Configuration
+  RPC_URL: {{ .Values.monitor.env.RPC_URL | quote }}
+  WS_RPC_URL: {{ .Values.monitor.env.WS_RPC_URL | quote }}
+  CHAIN_ID: {{ .Values.monitor.env.CHAIN_ID | quote }}
+  
+  # Performance Settings
+  MAX_CONCURRENT_CHECKS: {{ .Values.monitor.env.MAX_CONCURRENT_CHECKS | quote }}
+  BATCH_SIZE: {{ .Values.monitor.env.BATCH_SIZE | quote }}
+  WORKER_COUNT: {{ .Values.monitor.env.WORKER_COUNT | quote }}
+  POSITION_CHECK_INTERVAL: {{ .Values.monitor.env.POSITION_CHECK_INTERVAL | quote }}
+  PRICE_UPDATE_INTERVAL: {{ .Values.monitor.env.PRICE_UPDATE_INTERVAL | quote }}
+  LOG_LEVEL: {{ .Values.monitor.env.LOG_LEVEL | quote }}
+  
+  # Metrics
+  METRICS_ENABLED: {{ .Values.monitor.env.METRICS_ENABLED | quote }}
+  METRICS_PORT: {{ .Values.monitor.env.METRICS_PORT | quote }}
+  
+  # Oracle Configuration
+  ORACLE_PRECOMPILE: "0x0000000000000000000000000000000000000807"

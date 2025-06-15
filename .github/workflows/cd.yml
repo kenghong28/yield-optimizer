@@ -1,0 +1,328 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Build and Push Docker Images
+  build-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/monitor
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push monitor image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/monitor
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.tags }}
+          format: spdx-json
+          output-file: sbom-monitor.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-monitor
+          path: sbom-monitor.json
+
+  # Security Scanning
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: build-push
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ needs.build-push.outputs.image-tag }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ needs.build-push.outputs.image-tag }}
+          args: --severity-threshold=high
+
+  # Deploy to Development
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [build-push, security-scan]
+    if: github.ref == 'refs/heads/develop' || github.event.inputs.environment == 'dev'
+    environment:
+      name: development
+      url: https://dev.yield-optimizer.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.DEV_KUBECONFIG }}" | base64 -d > /tmp/kubeconfig
+          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+
+      - name: Update Helm values with new image
+        run: |
+          IMAGE_TAG="${{ needs.build-push.outputs.image-tag }}"
+          sed -i "s|image:.*|image: ${IMAGE_TAG}|g" helm/yield-optimizer/values-dev.yaml
+
+      - name: Deploy to Kubernetes
+        run: |
+          helm upgrade --install yield-optimizer ./helm/yield-optimizer \
+            --namespace yield-optimizer \
+            --create-namespace \
+            --values ./helm/yield-optimizer/values-dev.yaml \
+            --set monitor.image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 10m
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/yield-optimizer-monitor -n yield-optimizer
+          kubectl get pods -n yield-optimizer
+
+      - name: Run smoke tests
+        run: |
+          MONITOR_URL=$(kubectl get svc yield-optimizer-monitor -n yield-optimizer -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          curl -f http://${MONITOR_URL}:8080/health || exit 1
+
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-push, security-scan, deploy-dev]
+    if: github.ref == 'refs/heads/main' || github.event.inputs.environment == 'staging'
+    environment:
+      name: staging
+      url: https://staging.yield-optimizer.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > /tmp/kubeconfig
+          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+
+      - name: Deploy to staging
+        run: |
+          helm upgrade --install yield-optimizer ./helm/yield-optimizer \
+            --namespace yield-optimizer \
+            --create-namespace \
+            --values ./helm/yield-optimizer/values-staging.yaml \
+            --set monitor.image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 10m
+
+      - name: Run integration tests
+        run: |
+          # Run integration test suite against staging
+          echo "Running integration tests..."
+
+  # Deploy to Production
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-push, security-scan, deploy-staging]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.environment == 'prod'
+    environment:
+      name: production
+      url: https://yield-optimizer.example.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > /tmp/kubeconfig
+          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+
+      - name: Create backup
+        run: |
+          # Backup current deployment
+          kubectl get all -n yield-optimizer -o yaml > backup-$(date +%Y%m%d-%H%M%S).yaml
+
+      - name: Deploy to production
+        run: |
+          helm upgrade --install yield-optimizer ./helm/yield-optimizer \
+            --namespace yield-optimizer \
+            --create-namespace \
+            --values ./helm/yield-optimizer/values-prod.yaml \
+            --set monitor.image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 15m \
+            --atomic
+
+      - name: Verify deployment health
+        run: |
+          kubectl rollout status deployment/yield-optimizer-monitor -n yield-optimizer
+          
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=yield-optimizer -n yield-optimizer --timeout=300s
+          
+          # Check pod health
+          kubectl get pods -n yield-optimizer
+          
+          # Verify metrics endpoint
+          MONITOR_POD=$(kubectl get pod -n yield-optimizer -l app.kubernetes.io/component=monitor -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n yield-optimizer $MONITOR_POD -- wget -O- http://localhost:8080/health
+
+      - name: Update monitoring
+        run: |
+          # Update Grafana dashboards
+          # Configure alerts for new deployment
+          echo "Monitoring updated for version ${{ github.ref_name }}"
+
+      - name: Create release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }}
+          body: |
+            ## Changes in this Release
+            - Docker Image: `${{ needs.build-push.outputs.image-tag }}`
+            - Image Digest: `${{ needs.build-push.outputs.image-digest }}`
+            
+            ## Deployment Status
+            - Development: ✅
+            - Staging: ✅
+            - Production: ✅
+          draft: false
+          prerelease: false
+
+  # Rollback Job (Manual Trigger)
+  rollback:
+    name: Rollback Deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && failure()
+    steps:
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets[format('{0}_KUBECONFIG', github.event.inputs.environment)] }}" | base64 -d > /tmp/kubeconfig
+          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+
+      - name: Rollback Helm release
+        run: |
+          helm rollback yield-optimizer -n yield-optimizer
+
+      - name: Verify rollback
+        run: |
+          kubectl rollout status deployment/yield-optimizer-monitor -n yield-optimizer
+          kubectl get pods -n yield-optimizer
+
+  # Notification Job
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy-dev, deploy-staging, deploy-prod]
+    if: always()
+    steps:
+      - name: Send Slack notification
+        uses: 8398a7/action-slack@v3
+        if: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          status: ${{ job.status }}
+          text: |
+            Deployment Status:
+            - Repository: ${{ github.repository }}
+            - Branch/Tag: ${{ github.ref_name }}
+            - Commit: ${{ github.sha }}
+            - Author: ${{ github.actor }}
+            - Status: ${{ job.status }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

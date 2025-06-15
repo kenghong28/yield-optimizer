@@ -1,0 +1,151 @@
+name: Release Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'minor'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      previous_version: ${{ steps.version.outputs.previous_version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event.inputs.version }}" != "" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            # Get latest tag
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            
+            # Calculate new version based on release type
+            case "${{ github.event.inputs.release_type }}" in
+              major)
+                VERSION=$(echo $LATEST_TAG | awk -F. '{print "v" $1+1 ".0.0"}' | sed 's/vv/v/')
+                ;;
+              minor)
+                VERSION=$(echo $LATEST_TAG | awk -F. '{print $1 "." $2+1 ".0"}')
+                ;;
+              patch)
+                VERSION=$(echo $LATEST_TAG | awk -F. '{print $1 "." $2 "." $3+1}')
+                ;;
+            esac
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "previous_version=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "New version: $VERSION (previous: $LATEST_TAG)"
+
+      - name: Generate changelog
+        id: changelog
+        uses: orhun/git-cliff-action@v3
+        with:
+          config: .github/cliff.toml
+          args: --tag ${{ steps.version.outputs.version }}
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Create release branch
+        run: |
+          git checkout -b release/${{ steps.version.outputs.version }}
+          
+          # Update version in files
+          find . -name "*.yaml" -o -name "*.yml" | xargs sed -i "s/version:.*/version: ${{ steps.version.outputs.version }}/g"
+          find . -name "Chart.yaml" | xargs sed -i "s/appVersion:.*/appVersion: \"${{ steps.version.outputs.version }}\"/g"
+          
+          # Commit changes
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add .
+          git commit -m "chore: prepare release ${{ steps.version.outputs.version }}"
+          git push origin release/${{ steps.version.outputs.version }}
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          branch: release/${{ steps.version.outputs.version }}
+          title: "Release ${{ steps.version.outputs.version }}"
+          body: |
+            ## Release ${{ steps.version.outputs.version }}
+            
+            ### Changes
+            ${{ steps.changelog.outputs.content }}
+            
+            ### Checklist
+            - [ ] Version numbers updated
+            - [ ] Changelog generated
+            - [ ] Tests passing
+            - [ ] Documentation updated
+            
+            ### Release Process
+            1. Review and approve this PR
+            2. Merge to main
+            3. Tag will be created automatically
+            4. Release pipeline will deploy to production
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create tag
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -a ${{ needs.prepare-release.outputs.version }} -m "Release ${{ needs.prepare-release.outputs.version }}"
+          git push origin ${{ needs.prepare-release.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.version }}
+          release_name: ${{ needs.prepare-release.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+
+      - name: Trigger deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'cd.yml',
+              ref: '${{ needs.prepare-release.outputs.version }}',
+              inputs: {
+                environment: 'prod'
+              }
+            })

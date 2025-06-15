@@ -1,0 +1,17 @@
+#!/bin/bash
+
+echo "=== Yield Optimizer Monitoring Access ==="
+echo ""
+echo "Prometheus: http://localhost:9090"
+echo "Grafana: http://localhost:3000"
+echo "  Username: admin"
+echo "  Password: admin"
+echo ""
+echo "To add Prometheus data source in Grafana:"
+echo "1. Go to Configuration → Data Sources"
+echo "2. Add Prometheus"
+echo "3. URL: http://host.docker.internal:9090"
+echo ""
+echo "To stop monitoring:"
+echo "docker stop yield-optimizer-prometheus yield-optimizer-grafana"
+echo "docker rm yield-optimizer-prometheus yield-optimizer-grafana"
