@@ -87,7 +87,7 @@ jobs:
           git push origin release/${{ steps.version.outputs.version }}
 
       - name: Create pull request
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v7
         with:
           branch: release/${{ steps.version.outputs.version }}
           title: "Release ${{ steps.version.outputs.version }}"
